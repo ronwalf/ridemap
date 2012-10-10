@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <title></title>
+        
+        <link rel="stylesheet" href="theme/default/style.css" type="text/css">
+        <link rel="stylesheet" href="style.css" type="text/css">
+        <style type="text/css">
+            #controlToggle li {
+                list-style: none;
+            }
+            p {
+                width: 512px;
+            }
+
+            /* avoid pink tiles */
+            .olImageLoadError {
+                background-color: transparent !important;
+            }
+        </style>
+        <script src="OpenLayers.js"></script>
+        <script src="json2.js"></script>
+        <script src="hexmap.js"></script>
+    </head>
+    <body onload="init()">
+        <h1 id="title">Combined ride map</h1>
+
+
+        <p id="shortdesc">
+        </p>
+
+        <div id="map" class="bigmap"></div>
+        <table id="info">
+          <tr><td>Total time:</td><td id="totalTime"></td></tr>
+        </table>
+
+       </body>
+</html>
