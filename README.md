@@ -12,9 +12,9 @@ Once Haskell is installed, use cabal to build and install ridemap:
 
 This installs one executable, `ridemap`, which takes any number of [Golden Cheetah](http://goldencheetah.org/) JSON ride files on the command line, and outputs to stdout a JSON data structure to be loaded by the Javascript in the `html` directory.  Here is a minimal example that should produce a map:
 
-   $ cd ridemap
-   $ ridemap /path/to/GC/rides/\*.json > html/data.json
-   $ scp -Cr html/ remote.host:/path/to/map/dir/
+    $ cd ridemap
+    $ ridemap /path/to/GC/rides/\*.json > html/data.json
+    $ scp -Cr html/ remote.host:/path/to/map/dir/
 
 To view the map, it must be through a web server, since browsers restrict XMLHttpRequest for local files.
 
