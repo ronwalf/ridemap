@@ -1,6 +1,6 @@
 # ridemap
 
-Creates a combined map of Golden Cheetah activities suitable for embedding on a web page.
+Creates a [combined map](http://www.cs.umd.edu/~ronwalf/2012/map/) of Golden Cheetah activities suitable for embedding on a web page.
 
 
 ## Requirements and installation.

@@ -4,7 +4,7 @@ import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.Function (on)
 import Data.List (sortBy)
-import qualified Data.Map.Strict as M
+import qualified Data.Map as M
 import Data.Maybe (mapMaybe)
 import Debug.Trace (trace)
 import System.Console.GetOpt
