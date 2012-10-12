@@ -242,11 +242,7 @@ function Rider(map, grid, datadir) {
     var size = new OpenLayers.Size(20,20);
     var offset = new OpenLayers.Pixel(-(size.w/2), -(size.h/2));
     this.icon = new OpenLayers.Icon('img/MUTCD_R4-11.svg', size, offset);
-    //this.icon = new OpenLayers.Icon('http://upload.wikimedia.org/wikipedia/commons/thumb/4/42/MUTCD_R4-11.svg/200px-MUTCD_R4-11.svg.png', size, offset);
 
-    //map.addLayers([this.layer, this.markers]);
-    //map.setLayerIndex(this.markers, 0);
-    
     setInterval(OpenLayers.Animation.requestFrame, 100, function() { rider.step(); });
 }
 
@@ -303,10 +299,9 @@ function Ride(rider, index, points) {
     this.point = null;
 
     var size = new OpenLayers.Size
-    this.marker = new OpenLayers.Marker(new OpenLayers.LonLat(-76.87728303647957,38.99905256164584).transform(rider.grid.projection,rider.map.projection),rider.icon.clone());
+    this.marker = new OpenLayers.Marker(new OpenLayers.LonLat(0,0),rider.icon.clone());
+    this.marker.display(false);
     rider.markers.addMarker(this.marker);
-    //this.marker = new OpenLayers.Marker(new OpenLayers.Pixel(0,0),rider.icon.clone());
-    //this.marker.display(true);
 }
 
 
@@ -319,26 +314,13 @@ Ride.prototype.step = function (millis) {
     if (nextPoint == null) {
         this.countdown -= millis;
         if (this.countdown <= 0) {
-            /*
-            this.rider.layer.removeFeatures(this.features);
-            for (var feature in this.features) {
-                this.features[feature].destroy();
-            }
-            */
             this.rider.markers.removeMarker(this.marker);
             return true;
         }
         this.marker.inflate(this.countdown/(3*1000));
     } else {
-        /*
-        if (this.point != null) {
-            this.rider.layer.removeFeatures([this.point]);
-        }
-        */
         this.marker.display(true);
         this.marker.moveTo(this.rider.map.getPixelFromLonLat(nextPoint));
-        //this.marker.draw();
-        this.rider.markers.redraw();
     }
     return false;
 }
