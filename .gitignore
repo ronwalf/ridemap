@@ -1,6 +1,6 @@
 dist
 cabal-dev
-html/data.json
+html/data
 *.o
 *.hi
 *.chi

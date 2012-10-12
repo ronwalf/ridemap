@@ -1,5 +1,5 @@
-{-# LANGUAGE OverloadedStrings #-}
-import Control.Monad (foldM, guard)
+{-# LANGUAGE FlexibleInstances, OverloadedStrings #-}
+import Control.Monad (foldM, guard, when)
 import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.Function (on)
@@ -8,7 +8,9 @@ import qualified Data.Map as M
 import Data.Maybe (mapMaybe)
 import Debug.Trace (trace)
 import System.Console.GetOpt
+import System.Directory (createDirectory, doesDirectoryExist)
 import System.Environment (getArgs)
+import System.FilePath (combine)
 import System.IO (hPutStrLn, stderr)
 
 
@@ -21,14 +23,16 @@ gCirc = 20037508.34*2
 data Options = Options {
     maxTime :: Double,
     minStep :: Double,
-    resolution :: Double
+    resolution :: Double,
+    projection :: (String, TrackPoint -> TrackPoint)
     }
 
 defaultOpts :: Options
 defaultOpts = Options {
     maxTime = 60,
     minStep = 0.5,
-    resolution = 20
+    resolution = 20,
+    projection = ("EPSG:4326",id)
 }
 
 readOrFail :: Read a => String -> String -> IO a
@@ -56,6 +60,9 @@ options =
             return $ opts { maxTime = m })
         "NUM")
         "maximum recording gap to try and interpolate"
+    , Option ['g'] ["google"] 
+        (NoArg (\opts -> return $ opts { projection = ("EPSG:900913", toGM) }))
+        "Use google maps projection"
     ]
 
 
@@ -63,74 +70,69 @@ options =
 main :: IO ()
 main = do
     argv <- getArgs
-    (opts, files) <- case getOpt Permute options argv of
-        (o, files, []) -> do
+    (opts, dir, files) <- case getOpt Permute options argv of
+        (o, dir:files, []) -> do
             opts <- foldM (\opts f -> f opts) defaultOpts o
-            return (opts, files)
+            return (opts, dir, files)
         (_,_, errs) ->
             ioError $ userError $
             concat errs
-            ++ usageInfo "Usage: rideaccum [OPTION...] files..." options
+            ++ usageInfo "Usage: rideaccum [OPTION...] ouput-directory files..." options
     --elapsed <- foldM totalTime 0 files
-    pm <- foldM (positions opts) M.empty files
-    hPutStrLn stderr $ "Number of positions: " ++ show (M.size pm)
-    let hexTimes = sortBy (flip compare `on` hcTime) $ map snd $ M.toList pm
-    let (maxCellTime, totalTime) = foldr (\hc (mt,tt) -> let ht = hcTime hc in mt `seq` tt `seq` (max mt ht, ht + tt)) (0,0) hexTimes
-    --let tp = (hexItoP (hexDesc opts) $ fst $ head hexTimes) { secs = snd $ head hexTimes }
-
-    --hPutStrLn stderr $ "Most common location: " ++ show (lon tp) ++ "," ++ show (lat tp) ++ " (" ++ show (secs tp) ++ ") seconds"
-    {-
-    let tp = last $
-            map (\(pt,t) -> (hexItoP (hexDesc opts) pt) { secs = t} ) $
-            sortBy (compare `on` snd) $ M.toList pm
-    hPutStrLn stderr $ "Bounding box: " ++ show (foldr (\((i,j),_) (l,b,r,t) -> 
-            let 
-                tp' = (hexItoP (hexDesc opts) (i,j))
-                x = lon tp'
-                y = lat tp'
-            in 
-        (if x < l then x else l, if y < b then y else b, if x > r then x else r, if y > t then y else t))
-        (lon tp, lat tp, lon tp, lat tp)
-        (M.toList pm))
-    -}
-    {-
-    hPutStrLn stderr $ "Point errors:"
-    mapM_ (\x -> hPutStrLn stderr $ show x) $
-        filter (\(p0, p1) -> p0 /= p1) $
-        map (\(p, _) -> (p, hexPtoI (hexDesc opts) ((\tp -> tp {lon = lon tp + 0.00000001 , lat = lat tp + 0.0000001}) (hexItoP (hexDesc opts) p)))) $
-        M.toList pm
-    -}
-
-    BL.putStrLn (encode $ HexGrid {
-        gridDesc = hexDesc opts,
-        gridCells = hexTimes,
-        gridMaxTime = maxCellTime,
-        gridTotalTime = totalTime,
-        gridRides = [] -- rides
-    })
+    ensureDirectory dir
+    grid <- foldM (positions opts dir) (emptyGrid (fst $ projection opts) $ hexDesc opts) files
+    BL.writeFile (combine dir "grid.json") (encode grid)
     return ()
+    where
+        ensureDirectory :: String -> IO ()
+        ensureDirectory dir = do
+            exists <- doesDirectoryExist dir
+            when (not exists) $ do
+                createDirectory dir
+            return ()
 
-positions :: Options -> (M.Map (Int, Int) HexCell)-> String -> IO (M.Map (Int,Int) HexCell)
-positions opts m f = do
-    ride <- m `seq` readGCRide f
-    --let m' = M.fromListWith addCells $ gridPath (minStep opts) (maxTime opts) (hexDesc opts) $ trackPoints ride 
-    --return (M.unionWith addCells m m')
-    return $ foldr (\hc m' -> M.insertWith addCells (hcPos hc) hc m') m $
-        gridPath (minStep opts) (maxTime opts) (hexDesc opts) $ trackPoints ride
+positions :: Options -> String -> HexGrid -> String -> IO HexGrid 
+positions opts dir grid f = do
+    ride <- readGCRide f
+    let segs = segments (maxTime opts) $ map (snd $ projection opts) $ trackPoints ride
+    foldM processSegment grid segs
+    where
+    processSegment :: HexGrid -> [TrackPoint] -> IO HexGrid
+    processSegment grid' segment = do
+        let path = gridPath (minStep opts) (hexDesc opts) segment
+        let m = foldr (\hc m' -> M.insertWith addCells (hcPos hc) hc m') (gridCells grid') path
+        BL.writeFile (combine dir $ "ride" ++ show (gridRides grid') ++ ".json") $
+                encode (object ["ride" .= segment])
+        return $ grid { gridCells = m, gridRides = gridRides grid' + 1 }
 
 
-data HexGrid = HexGrid { 
-    gridDesc :: HexDesc, 
-    gridCells :: [HexCell], 
-    gridMaxTime :: Double,
-    gridTotalTime :: Double,
-    gridRides :: [[(Double,Double)]] }
+
+data HexGrid = HexGrid {
+    gridProj :: !String,
+    gridDesc :: !HexDesc, 
+    gridCells :: !(M.Map (Int, Int) HexCell), 
+    gridRides:: !Int }
+
+emptyGrid :: String -> HexDesc -> HexGrid 
+emptyGrid proj desc = HexGrid {
+    gridProj = proj,
+    gridDesc = desc,
+    gridCells = M.empty,
+    gridRides = 0
+}
+
 instance ToJSON HexGrid where
-    toJSON grid = object [ 
+    toJSON grid = 
+        let 
+            hexTimes = sortBy (flip compare `on` hcTime) $ map snd $ M.toList $ gridCells grid
+            (maxCellTime, totalTime) = foldr (\hc (mt,tt) -> let ht = hcTime hc in mt `seq` tt `seq` (max mt ht, ht + tt)) (0,0) hexTimes
+        in
+        object [ 
+        "projection" .= gridProj grid,
         "desc" .= gridDesc grid, 
-        "cells" .= gridCells grid, 
-        "maxTime" .= gridMaxTime grid,
-        "totalTime" .= gridTotalTime grid,
+        "cells" .= hexTimes, 
+        "maxTime" .= maxCellTime,
+        "totalTime" .= totalTime,
         "rides" .= gridRides grid ]
 
 data HexCell = HexCell {
@@ -160,10 +162,24 @@ addCells x y = -- x `seq` y `seq`
 }
 
 
+segments :: Double -> [TrackPoint] -> [[TrackPoint]]
+segments _ [] = []
+segments mstep (tp:tpl) =
+    let
+        (continuous, skip) = segSpan tp tpl
+    in
+    continuous : segments mstep skip
+    where
+    segSpan tp [] = ([tp],[])
+    segSpan tp0 (tp1 : tpl)
+        | secs tp1 - secs tp0 > mstep = ([tp0], tp1 : tpl)
+        | otherwise = 
+            let (x, y) = segSpan tp1 tpl in
+            (tp0 : x, y)
 
-gridPath :: Double -> Double -> HexDesc -> [TrackPoint] -> [HexCell]
-gridPath _ _ _ [] = []
-gridPath step mstep desc (h : l) =
+gridPath :: Double -> HexDesc -> [TrackPoint] -> [HexCell]
+gridPath _ _ [] = []
+gridPath step desc (h : l) =
     gp' 0 h l
     where
         pos :: TrackPoint -> (Int,Int)
@@ -179,28 +195,9 @@ gridPath step mstep desc (h : l) =
                 else if (x0 == x1 + 1 || x0 == x1 -1)
                     then (y0 == y1 + mod (x1+1) 2 || y0 == y1 - mod x1 2)
                     else False
-            {-
-            pos tp0 `elem`
-                [ (x1, y1) -- Same ?
-                , (x1, y1 + 1) -- Above
-                , (x1, y1 - 1) -- Below
-                , (x1 + 1, y1 + mod (x1+1) 2) -- Above right
-                , (x1 - 1, y1 + mod (x1+1) 2) -- Above left
-                , (x1 + 1, y1 - mod (x1) 2) -- Below right
-                , (x1 - 1, y1 - mod (x1) 2) -- Below left
-                ]
-            -}  
-            {- -- True ||
-            (x0 == x1 && (y0 == y1 - 1 || y0 == y1 + 1))
-            || ((x0 == x1 - 1 || x0 == x1 + 1)
-                && ((y0 == y1)
-                    || (mod x0 2 == 0 && y0 == y1 + 1)
-                    || (mod x0 2 == 1 && y0 == y1 - 1)))
-            -}
         gp' :: Double -> TrackPoint -> [TrackPoint] -> [HexCell]
         gp' t tp0 [] = [tpToCell desc tp0 t]
         gp' t tp0 (tp1 : tpl)
-            | elapsed > mstep = tpToCell desc tp0 t : gp' 0 tp1 tpl
             | pos tp0 == pos tp1 = t `seq` gp' (t + elapsed) tp1 tpl
             | (adjacent tp0 tp1 && elapsed < step) = tpToCell desc tp0 (t + elapsed/2) : gp' (elapsed/2) tp1 tpl
             -- | (adjacent tp0 tp1) = (pos tp0, t + elapsed/2) : gp' (elapsed/2) tp1 tpl
@@ -212,7 +209,13 @@ gridPath step mstep desc (h : l) =
 type HexDesc = (Double, Double, Double)
 
 hexDesc :: Options -> HexDesc
-hexDesc opts = let r = resolution opts * 360 / gCirc in (r, r * 1.5, r * sqrt 3)
+hexDesc opts = 
+    let
+        -- This is a pretty hacky way to find the hex parameters
+        tp = TrackPoint {lat = 0, lon = resolution opts * 360 / gCirc, secs=0} 
+        tp' = snd (projection opts) tp
+        r = lon tp'
+    in (r, r * 1.5, r * sqrt 3)
 
 hexItoP :: HexDesc -> (Int, Int) -> TrackPoint
 hexItoP (_, s, h) (i,j) = 
@@ -247,6 +250,9 @@ data TrackPoint = TrackPoint {
     secs :: !Double
 } deriving (Show, Ord, Eq)
 
+instance ToJSON TrackPoint where
+    toJSON tp = toJSON (lon tp, lat tp, secs tp)
+
 trackPoints :: GCRide -> [TrackPoint]
 trackPoints =
     mapMaybe toTP . samples
@@ -265,23 +271,20 @@ midpoint tp1 tp2 =
     TrackPoint { lat = (lat tp1 + lat tp2)/2, lon = (lon tp1 + lon tp2)/2, secs = (secs tp1 + secs tp2)/2 }
 
     
-{-
-toGM :: TrackPoint -> (Double, Double)
+toGM :: TrackPoint -> TrackPoint 
 toGM tp =
     let
-        x = (gCirc / 180) * lon tp
-        y = (*) (gCirc / pi) $ log $ tan $ (90 + lat tp) * pi / 360
+        x = (gCirc / 360) * lon tp
+        y = (*) (gCirc / (2*pi)) $ log $ tan $ (90 + lat tp) * pi / 360
     in
-    (x, y)
-    where
+    tp { lon = x, lat = y }
 
-fromGM :: (Double,Double) -> TrackPoint
-fromGM (x, y) =
+fromGM :: TrackPoint -> TrackPoint
+fromGM tp =
     let
-        ln = (180 / gCirc) * x
+        ln = (360 / gCirc) * lon tp
         lt = (*) (180 / pi) $
-            2 * atan (exp $ y * pi / gCirc) - pi / 2
+            2 * atan (exp $ 2 * (lat tp) * pi / gCirc) - pi / 2
     in
-    TrackPoint {lat = lt, lon = ln, secs = 0}
--}
+    tp {lat = lt, lon = ln, secs = 0}
 
