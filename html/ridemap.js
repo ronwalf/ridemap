@@ -1,3 +1,8 @@
+/*
+ * ridemap.js -- Copyright 2012 by Ron Alford
+ * Distributed under the BSD-3 license
+ * (see LICENSE file for details)
+ */
 var timeThreshold = 0.6;
 var cellColor = "#FF0000";
 var selectControl;
@@ -236,7 +241,7 @@ function Rider(map, grid, datadir) {
     this.markers = new OpenLayers.Layer.Markers( "Ride Markers" );
     var size = new OpenLayers.Size(20,20);
     var offset = new OpenLayers.Pixel(-(size.w/2), -(size.h/2));
-    this.icon = new OpenLayers.Icon('http://upload.wikimedia.org/wikipedia/commons/4/42/MUTCD_R4-11.svg', size, offset);
+    this.icon = new OpenLayers.Icon('img/MUTCD_R4-11.svg', size, offset);
     //this.icon = new OpenLayers.Icon('http://upload.wikimedia.org/wikipedia/commons/thumb/4/42/MUTCD_R4-11.svg/200px-MUTCD_R4-11.svg.png', size, offset);
 
     //map.addLayers([this.layer, this.markers]);
