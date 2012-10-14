@@ -10,7 +10,6 @@ module GCRide (
 import Control.Applicative
 import Control.Monad
 import Data.Aeson
-import Data.Aeson.Types
 import qualified Data.ByteString.Lazy as B
 import qualified Data.HashMap.Strict as H
 import qualified Data.Map as M

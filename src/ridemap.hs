@@ -6,12 +6,12 @@ import Data.Function (on)
 import Data.List (sortBy)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe)
-import Debug.Trace (trace)
+--import Debug.Trace (trace)
 import System.Console.GetOpt
 import System.Directory (createDirectory, doesDirectoryExist)
 import System.Environment (getArgs)
 import System.FilePath (combine)
-import System.IO (hPutStrLn, stderr)
+--import System.IO (hPutStrLn, stderr)
 
 
 import GCRide
@@ -80,7 +80,7 @@ main = do
             ++ usageInfo "Usage: rideaccum [OPTION...] ouput-directory files..." options
     --elapsed <- foldM totalTime 0 files
     ensureDirectory dir
-    grid <- foldM (positions opts dir) (emptyGrid (fst $ projection opts) $ hexDesc opts) files
+    grid <- foldM (positions dir) (emptyGrid opts) files
     BL.writeFile (combine dir "grid.json") (encode grid)
     return ()
     where
@@ -91,35 +91,40 @@ main = do
                 createDirectory dir
             return ()
 
-positions :: Options -> String -> HexGrid -> String -> IO HexGrid 
-positions opts dir grid f = do
+positions :: String -> HexGrid -> String -> IO HexGrid 
+positions dir grid f = do
     ride <- readGCRide f
-    let segs = segments (maxTime opts) $ map (snd $ projection opts) $ trackPoints ride
-    foldM processSegment grid segs
+    let tpl = map (snd $ projection $ gridOpts grid) $ trackPoints ride
+    BL.writeFile (combine dir $ "ride" ++ show (gridRides grid) ++ ".json") $
+        encode (object ["ride" .= tpl])
+    let segs = segments (maxTime $ gridOpts grid) $ tpl
+    foldM processSegment (grid { gridRides = gridRides grid + 1 }) segs
     where
     processSegment :: HexGrid -> [TrackPoint] -> IO HexGrid
     processSegment grid' segment = do
-        let path = gridPath (minStep opts) (hexDesc opts) segment
+        let path = gridPath (minStep $ gridOpts grid') (gridDesc grid') segment
         let m = foldr (\hc m' -> M.insertWith addCells (hcPos hc) hc m') (gridCells grid') path
-        BL.writeFile (combine dir $ "ride" ++ show (gridRides grid') ++ ".json") $
-                encode (object ["ride" .= segment])
-        return $ grid { gridCells = m, gridRides = gridRides grid' + 1 }
+        return $ grid' { gridCells = m }
 
 
 
 data HexGrid = HexGrid {
-    gridProj :: !String,
-    gridDesc :: !HexDesc, 
+    gridOpts :: !Options,
     gridCells :: !(M.Map (Int, Int) HexCell), 
     gridRides:: !Int }
 
-emptyGrid :: String -> HexDesc -> HexGrid 
-emptyGrid proj desc = HexGrid {
-    gridProj = proj,
-    gridDesc = desc,
+emptyGrid :: Options -> HexGrid 
+emptyGrid opts = HexGrid {
+    gridOpts = opts,
     gridCells = M.empty,
     gridRides = 0
 }
+
+gridProj :: HexGrid -> String
+gridProj = fst . projection . gridOpts
+
+gridDesc :: HexGrid -> HexDesc
+gridDesc = hexDesc . gridOpts
 
 instance ToJSON HexGrid where
     toJSON grid = 
@@ -133,6 +138,7 @@ instance ToJSON HexGrid where
         "cells" .= hexTimes, 
         "maxTime" .= maxCellTime,
         "totalTime" .= totalTime,
+        "maxSkip" .= (maxTime $ gridOpts grid),
         "rides" .= gridRides grid ]
 
 data HexCell = HexCell {
@@ -163,18 +169,17 @@ addCells x y = -- x `seq` y `seq`
 
 
 segments :: Double -> [TrackPoint] -> [[TrackPoint]]
-segments _ [] = []
-segments mstep (tp:tpl) =
-    let
-        (continuous, skip) = segSpan tp tpl
-    in
-    continuous : segments mstep skip
+segments mstep =
+    segments' . segSpan
     where
-    segSpan tp [] = ([tp],[])
-    segSpan tp0 (tp1 : tpl)
+    segments' (x, []) = [x]
+    segments' (x, skip) = x : segments mstep skip
+    segSpan [] = ([],[])
+    segSpan [tp0] = ([tp0],[])
+    segSpan (tp0 : tp1 : tpl)
         | secs tp1 - secs tp0 > mstep = ([tp0], tp1 : tpl)
         | otherwise = 
-            let (x, y) = segSpan tp1 tpl in
+            let (x, y) = segSpan (tp1:tpl) in
             (tp0 : x, y)
 
 gridPath :: Double -> HexDesc -> [TrackPoint] -> [HexCell]
@@ -213,7 +218,7 @@ hexDesc opts =
     let
         -- This is a pretty hacky way to find the hex parameters
         tp = TrackPoint {lat = 0, lon = resolution opts * 360 / gCirc, secs=0} 
-        tp' = snd (projection opts) tp
+        tp' = (snd $ projection opts) tp
         r = lon tp'
     in (r, r * 1.5, r * sqrt 3)
 
@@ -226,7 +231,7 @@ hexItoP (_, s, h) (i,j) =
     }
 
 hexPtoI :: HexDesc -> TrackPoint -> (Int,Int)
-hexPtoI desc@(r, s, h) tp =
+hexPtoI (r, s, h) tp =
     let
         it = floor (lon tp / s) :: Int
         xt = (lon tp) - (fromIntegral it) * s :: Double

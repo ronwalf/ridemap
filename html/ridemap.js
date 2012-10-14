@@ -19,7 +19,7 @@ function init(datadir){
     //map.addLayers([omLayer, wmsLayer]);
     grid = new Grid(map, datadir);
     rider = new Rider(map, grid, datadir);
-    map.addLayers([omLayer, grid.layer, rider.layer, rider.markers]);
+    map.addLayers([omLayer, grid.layer, rider.layer]); //, rider.markers]);
     //gridLayer.setIsBaseLayer(true); map.addLayers([gridLayer]);
     map.addControl(new OpenLayers.Control.LayerSwitcher());
     map.addControl(new OpenLayers.Control.MousePosition());
@@ -35,7 +35,7 @@ function Grid(map, datadir) {
 
     this.layer = new OpenLayers.Layer.Vector("Grid Layer", 
       { //projection: new OpenLayers.Projection("EPSG:4326"),
-        renderers: ["Canvas", "SVG", "VML"]
+        //renderers: ["Canvas", "SVG", "VML"]
       });
     //map.addLayer(this.layer);
     this.layer.events.on({
@@ -112,7 +112,7 @@ Grid.prototype.cellFeature = function(cell) {
 
     var cellOp = 0.1+ 0.9*(Math.log(1+cell["time"])/Math.log(1+this.maxTime));
     var hexFeature = new OpenLayers.Feature.Vector(hexPoly, cell, 
-        {stroke:true,
+        {stroke:false,
         strokeColor: cellColor,
         strokeOpacity: cellOp, 
         strokeWidth: cellOp*2,
@@ -130,6 +130,7 @@ Grid.prototype.update = function (data) {
     this.maxTime = data['maxTime'];
     this.totalTime = data['totalTime'];
     this.rides = data['rides'];
+    this.maxSkip = data['maxSkip'];
 
     this.layer.removeAllFeatures();
 
@@ -232,18 +233,34 @@ function Rider(map, grid, datadir) {
     this.rides = [];    
     this.time = new Date();
 
+    this.style = {
+        graphicWidth: 20,
+        graphicHeight: 20,
+        externalGraphic: 'img/MUTCD_R4-11.svg',
+        //externalGraphic: "http://upload.wikimedia.org/wikipedia/commons/thumb/4/42/MUTCD_R4-11.svg/200px-MUTCD_R4-11.svg.png",
+        fill: false,
+        fillOpacity: 1,
+        stroke: false,
+        pointRadius: 0,
+        };
+    var style = new OpenLayers.Style(OpenLayers.Util.applyDefaults(this.style, OpenLayers.Feature.Vector.style["default"]));
+    var styleMap = new OpenLayers.StyleMap({"default": style, "select": style}); 
 
     this.layer = new OpenLayers.Layer.Vector("Ride Layer", 
       { //projection: new OpenLayers.Projection("EPSG:4326"),
-        renderers: ["Canvas", "SVG", "VML"]
+        //renderers: ["Canvas", "SVG", "VML"],
+        projection: map.projection,
+        styleMap : styleMap
       });
 
+    /*
     this.markers = new OpenLayers.Layer.Markers( "Ride Markers" );
     var size = new OpenLayers.Size(20,20);
     var offset = new OpenLayers.Pixel(-(size.w/2), -(size.h/2));
     this.icon = new OpenLayers.Icon('img/MUTCD_R4-11.svg', size, offset);
-
-    setInterval(OpenLayers.Animation.requestFrame, 100, function() { rider.step(); });
+    */
+    //setInterval(OpenLayers.Animation.requestFrame, 100, function() { rider.step(); });
+    this.animation = OpenLayers.Animation.start(function() { rider.step(); });
 }
 
 Rider.prototype.step = function() {
@@ -298,10 +315,12 @@ function Ride(rider, index, points) {
 
     this.point = null;
 
-    var size = new OpenLayers.Size
-    this.marker = new OpenLayers.Marker(new OpenLayers.LonLat(0,0),rider.icon.clone());
-    this.marker.display(false);
-    rider.markers.addMarker(this.marker);
+    var size = new OpenLayers.Size;
+    this.feature = new OpenLayers.Feature.Vector(new OpenLayers.Geometry.Point(0,0), this);
+    rider.layer.addFeatures([this.feature]);
+    //this.marker = new OpenLayers.Marker(new OpenLayers.LonLat(0,0),rider.icon.clone());
+    //this.marker.display(false);
+    //rider.markers.addMarker(this.marker);
 }
 
 
@@ -312,38 +331,39 @@ Ride.prototype.step = function (millis) {
     var nextPoint = this.getPoint();
 
     if (nextPoint == null) {
-        this.countdown -= millis;
-        if (this.countdown <= 0) {
-            this.rider.markers.removeMarker(this.marker);
+        if (this.time > this.countdown) {
+            //this.rider.markers.removeMarker(this.marker);
+            this.rider.layer.removeFeatures([this.feature]);
             return true;
         }
-        this.marker.inflate(this.countdown/(3*1000));
+        //this.marker.inflate(this.time/this.countdown);
+        //this.feature.style.opacity = (this.time/this.countdown);
     } else {
-        this.marker.display(true);
-        this.marker.moveTo(this.rider.map.getPixelFromLonLat(nextPoint));
+        this.feature.move(nextPoint);
     }
     return false;
 }
 
 
 Ride.prototype.getPoint = function() {
-    if (this.current + 1 >= this.points.length) {
-        return null;
-    }
-    var lastPoint = this.points[this.current];
-    var nextPoint = this.points[this.current + 1];
-    var totalTime = (nextPoint[2] - lastPoint[2])*1000;
 
-    if (this.time > totalTime) {
-        this.current++;
-        this.time -= totalTime;
-        return this.getPoint();
-    }
+    var point = null;
+    while (point == null && this.current + 1 < this.points.length) {
+        var lastPoint = this.points[this.current];
+        var nextPoint = this.points[this.current + 1];
+        var totalTime = Math.min(this.rider.grid.maxSkip, nextPoint[2] - lastPoint[2])*1000;
 
-    var x = (lastPoint[0]*this.time + nextPoint[0]*(totalTime - this.time))/totalTime;
-    var y = (lastPoint[1]*this.time + nextPoint[1]*(totalTime - this.time))/totalTime;
-    var point = new OpenLayers.LonLat(x,y);
-    point.transform(this.rider.grid.projection, this.rider.map);
+        if (this.time > totalTime) {
+            this.current++;
+            this.time -= totalTime;
+            continue;
+        }
+
+        var x = (lastPoint[0]*this.time + nextPoint[0]*(totalTime - this.time))/totalTime;
+        var y = (lastPoint[1]*this.time + nextPoint[1]*(totalTime - this.time))/totalTime;
+        var point = new OpenLayers.LonLat(x,y);
+        point.transform(this.rider.grid.projection, this.rider.map);
+    }
     return point;
 }
 
