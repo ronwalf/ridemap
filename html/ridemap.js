@@ -445,12 +445,12 @@ Ride.prototype.getPoint = function() {
         }
 
         var x, y;
-        if (this.rider.grid.maxSkip > duration) {
+        if (this.rider.grid.maxSkip < duration) {
             x = lastPoint[0];
             y = lastPoint[1];
         } else {
-            x = (lastPoint[0]*this.time + nextPoint[0]*(maxMillis - this.time))/maxMillis;
-            y = (lastPoint[1]*this.time + nextPoint[1]*(maxMillis - this.time))/maxMillis;
+            x = (lastPoint[0]*(maxMillis - this.time) + nextPoint[0]*this.time)/maxMillis;
+            y = (lastPoint[1]*(maxMillis - this.time) + nextPoint[1]*this.time)/maxMillis;
         }
         var point = new OpenLayers.LonLat(x,y).transform(this.rider.grid.projection, this.rider.map.baseLayer.projection);
     }
