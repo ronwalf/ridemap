@@ -119,7 +119,8 @@ Grid.prototype.cellFeature = function(cell) {
         strokeWidth: Math.max(1,cellOp*3),
         //strokeWidth: 3,
         fillColor:cellColor, 
-        fillOpacity:cellOp});
+        fillOpacity:cellOp,
+        graphicZIndex: 20});
     return hexFeature;
 }
 
@@ -384,12 +385,14 @@ Ride.prototype.select = function() {
             stroke: true,
             strokeColor: "#FF0000",
             strokeWidth: 4,
-            strokeOpacity: 0.8}),
+            strokeOpacity: 0.8,
+            graphicZIndex: 15}),
         new OpenLayers.Feature.Vector(multiline.clone(), this, {
             stroke: true,
             strokeColor: "#000000",
             strokeWidth: 1.5,
-            strokeOpacity: 1})
+            strokeOpacity: 1,
+            graphicZIndex: 10})
             ];
     this.rider.grid.layer.addFeatures(this.rideFeatures);
 
