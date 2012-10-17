@@ -383,9 +383,9 @@ Ride.prototype.select = function() {
         new OpenLayers.Feature.Vector(multiline, this, {
             stroke: true,
             strokeColor: "#FF0000",
-            strokeWidth: 6,
+            strokeWidth: 4,
             strokeOpacity: 0.8}),
-        new OpenLayers.Feature.Vector(multiline, this, {
+        new OpenLayers.Feature.Vector(multiline.clone(), this, {
             stroke: true,
             strokeColor: "#000000",
             strokeWidth: 1.5,
