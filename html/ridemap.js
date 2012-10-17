@@ -5,7 +5,6 @@
  */
 var timeThreshold = 0.6;
 var cellColor = "#FF0000";
-var selectControl;
 
 var grid = null
 var rider = null;
@@ -13,128 +12,44 @@ var rider = null;
 function init(datadir){
     map = new OpenLayers.Map('map');
 
-    var wmsLayer = new OpenLayers.Layer.WMS( "OpenLayers WMS",
-        "http://vmap0.tiles.osgeo.org/wms/vmap0?", {layers: 'basic'});
+    //var wmsLayer = new OpenLayers.Layer.WMS( "OpenLayers WMS",
+    //    "http://vmap0.tiles.osgeo.org/wms/vmap0?", {layers: 'basic'});
     var omLayer = new OpenLayers.Layer.OSM();
     //map.addLayers([omLayer, wmsLayer]);
-    grid = new Grid(map, datadir);
-    rider = new Rider(map, grid, datadir);
-    map.addLayers([omLayer, grid.layer, rider.layer]); //, rider.markers]);
-    //gridLayer.setIsBaseLayer(true); map.addLayers([gridLayer]);
-    map.addControl(new OpenLayers.Control.LayerSwitcher());
-    map.addControl(new OpenLayers.Control.MousePosition());
-    //map.setCenter(new OpenLayers.LonLat(0, 0), 3);
+    map.addLayers([omLayer]);
     
-}
-
-
-function Grid(map, datadir) {
-    this.map = map
-    this.data = null;
-    this.desc = null;
-
-    this.layer = new OpenLayers.Layer.Vector("Grid Layer", 
-      { //projection: new OpenLayers.Projection("EPSG:4326"),
-        //renderers: ["Canvas", "SVG", "VML"]
-      });
-    //map.addLayer(this.layer);
-    this.layer.events.on({
-        'featureselected': onFeatureSelect,
-        'featureunselected': onFeatureUnselect
-    });
     
-    var report = function(e) {
-        OpenLayers.Console.log(e.type, e.feature.id);
-    };
-            
-    var highlightCtrl = new OpenLayers.Control.SelectFeature(this.layer, {
-        hover: true,
-        highlightOnly: true,
-        renderIntent: "temporary",
-        eventListeners: {
-            beforefeaturehighlighted: report,
-            featurehighlighted: report,
-            featureunhighlighted: report
-        },
-        selectStyle : {
-            fillOpacity: 0.5,
-            stroke : true,
-            strokeWidth : 0.5
-        }
-    });
-    map.addControl(highlightCtrl);
-    highlightCtrl.activate();
-    
-    selectControl = new OpenLayers.Control.SelectFeature(this.layer,
-        {clickout: true}
-    );
-    map.addControl(selectControl);
-    selectControl.activate();
-    
-    var grid = this;
     var xobj = new XMLHttpRequest();
     xobj.overrideMimeType("application/json");
     xobj.open('GET', datadir + '/grid.json', true);
     xobj.onreadystatechange = function () {
       if (xobj.readyState == 4) {
         var jsonText = xobj.responseText;
-        grid.update(JSON.parse(jsonText));
+        grid = new Grid(map, datadir, JSON.parse(jsonText));
+        rider = new Rider(map, grid, datadir);
+        map.addLayers([grid.layer, rider.layer]);
       }
     };
     xobj.send();
+
+    map.addControl(new OpenLayers.Control.LayerSwitcher());
 }
 
 
-Grid.prototype.hexItoP = function(p) {
-  var s = this.desc[1];
-  var h = this.desc[2];
-  return [p[0] * s, h * (p[1] - 0.5 * Math.abs(p[0] % 2))];
-}
+function Grid(map, datadir, data) {
+    this.map = map
 
-
-Grid.prototype.cellFeature = function(cell) {
-    var pos = this.hexItoP(cell['pos']);
-    var x = pos[0];
-    var y = pos[1];
-    var r = this.desc[0];
-    var s = this.desc[1];
-    var h = this.desc[2];
-
-    var points = new Array(
-      new OpenLayers.Geometry.Point(x,y),
-      new OpenLayers.Geometry.Point(x + r ,y),
-      new OpenLayers.Geometry.Point(x+s,y+(h/2.0)),
-      new OpenLayers.Geometry.Point(x+r,y+h),
-      new OpenLayers.Geometry.Point(x,y+h),
-      new OpenLayers.Geometry.Point(x+r-s,y+(h/2.0)));
-    var hexPoly = new OpenLayers.Geometry.Polygon([new OpenLayers.Geometry.LinearRing(points)]);
-    hexPoly.transform(this.projection, map.baseLayer.projection);
-
-    var cellOp = 0.1+ 0.9*(Math.log(1+cell["time"])/Math.log(1+this.maxTime));
-    var hexFeature = new OpenLayers.Feature.Vector(hexPoly, cell, 
-        {stroke:false,
-        strokeColor: cellColor,
-        strokeOpacity: cellOp, 
-        strokeWidth: cellOp*2,
-        //strokeWidth: 3,
-        fillColor:cellColor, 
-        fillOpacity:cellOp});
-    return hexFeature;
-}
-
-
-Grid.prototype.update = function (data) {
     this.data = data;
     this.projection = new OpenLayers.Projection(data["projection"]);
+    this.layer = new OpenLayers.Layer.Vector("Grid Layer", 
+        { projection: this.projection });
+
     this.desc = data['desc'];
     this.maxTime = data['maxTime'];
     this.totalTime = data['totalTime'];
     this.rides = data['rides'];
     this.maxSkip = data['maxSkip'];
 
-    this.layer.removeAllFeatures();
-
-  
     var p = this.hexItoP(data['cells'][0]["pos"]);
 
     var maxTime = data['maxTime'];
@@ -170,6 +85,45 @@ Grid.prototype.update = function (data) {
     updateTime(totalTime);
 }
 
+
+Grid.prototype.hexItoP = function(p) {
+  var s = this.desc[1];
+  var h = this.desc[2];
+  return [p[0] * s, h * (p[1] - 0.5 * Math.abs(p[0] % 2))];
+}
+
+
+Grid.prototype.cellFeature = function(cell) {
+    var pos = this.hexItoP(cell['pos']);
+    var x = pos[0];
+    var y = pos[1];
+    var r = this.desc[0];
+    var s = this.desc[1];
+    var h = this.desc[2];
+
+    points = new Array(
+      new OpenLayers.Geometry.Point(x,y),
+      new OpenLayers.Geometry.Point(x + r ,y),
+      new OpenLayers.Geometry.Point(x+s,y+(h/2.0)),
+      new OpenLayers.Geometry.Point(x+r,y+h),
+      new OpenLayers.Geometry.Point(x,y+h),
+      new OpenLayers.Geometry.Point(x+r-s,y+(h/2.0)));
+    var hexPoly = new OpenLayers.Geometry.Polygon([new OpenLayers.Geometry.LinearRing(points)]);
+    hexPoly.transform(this.projection, map.baseLayer.projection);
+
+    var cellOp = 0.1+ 0.9*(Math.log(1+cell["time"])/Math.log(1+this.maxTime));
+    var hexFeature = new OpenLayers.Feature.Vector(hexPoly, cell, 
+        {stroke:true,
+        strokeColor: cellColor,
+        strokeOpacity: Math.max(0.25, cellOp/2),
+        strokeWidth: Math.max(1,cellOp*3),
+        //strokeWidth: 3,
+        fillColor:cellColor, 
+        fillOpacity:cellOp});
+    return hexFeature;
+}
+
+
 function updateTime(totalSecs) {
     var secs = totalSecs % 60;
     var totalMinutes = Math.floor(totalSecs/60);
@@ -197,32 +151,6 @@ function onPopupClose(evt) {
         this.destroy();
     }
 }
-function onFeatureSelect(evt) {
-    feature = evt.feature;
-    popup = new OpenLayers.Popup.FramedCloud("featurePopup",
-                             feature.geometry.getBounds().getCenterLonLat(),
-                             new OpenLayers.Size(100,100),
-                             "<h2>"+feature.geometry.getBounds().getCenterLonLat().clone().transform(map.baseLayer.projection, "EPSG:4326") + "</h2>" +
-                             "<table>" +
-                             "<tr><td>Total seconds:</td><td>" + Math.round(feature.attributes["time"]) + "</td></tr>" +
-                             "<tr><td>Total visits:</td><td>" + feature.attributes["count"] + "</td></tr>" +
-                             "</table>",
-                             null, true, onPopupClose);
-    feature.popup = popup;
-    popup.feature = feature;
-    map.addPopup(popup, true);
-}
-
-function onFeatureUnselect(evt) {
-    feature = evt.feature;
-    if (feature.popup) {
-        popup.feature = null;
-        map.removePopup(feature.popup);
-        feature.popup.destroy();
-        feature.popup = null;
-    }
-}
-
 
 function Rider(map, grid, datadir) {
     this.map = map;
@@ -233,7 +161,7 @@ function Rider(map, grid, datadir) {
     this.rides = [];    
     this.time = new Date();
 
-    this.style = {
+    var defaultStyle = OpenLayers.Util.applyDefaults({
         graphicWidth: 20,
         graphicHeight: 20,
         externalGraphic: 'img/MUTCD_R4-11.svg',
@@ -242,45 +170,73 @@ function Rider(map, grid, datadir) {
         fillOpacity: 1,
         stroke: false,
         pointRadius: 0,
-        };
-    var style = new OpenLayers.Style(OpenLayers.Util.applyDefaults(this.style, OpenLayers.Feature.Vector.style["default"]));
-    var styleMap = new OpenLayers.StyleMap({"default": style, "select": style}); 
+        }, OpenLayers.Feature.Vector.style["default"]);
+    var selectedStyle = OpenLayers.Util.applyDefaults({
+        graphicWidth: 30,
+        graphicHeight: 30
+    }, defaultStyle);
+    
+    var styleMap = new OpenLayers.StyleMap({"default": new OpenLayers.Style(defaultStyle), "select": new OpenLayers.Style(selectedStyle)}); 
 
     this.layer = new OpenLayers.Layer.Vector("Ride Layer", 
-      { //projection: new OpenLayers.Projection("EPSG:4326"),
-        //renderers: ["Canvas", "SVG", "VML"],
-        projection: map.projection,
+      { projection: grid.projection,
         styleMap : styleMap
       });
+    
+    this.layer.events.on({
+        'featureselected': this.onFeatureSelect,
+        'featureunselected': this.onFeatureUnselect
+    });
+    
+    this.selectControl = new OpenLayers.Control.SelectFeature(this.layer,
+        {clickout: true}
+    );
+    map.addControl(this.selectControl);
+    this.selectControl.activate();
 
-    /*
-    this.markers = new OpenLayers.Layer.Markers( "Ride Markers" );
-    var size = new OpenLayers.Size(20,20);
-    var offset = new OpenLayers.Pixel(-(size.w/2), -(size.h/2));
-    this.icon = new OpenLayers.Icon('img/MUTCD_R4-11.svg', size, offset);
-    */
-    //setInterval(OpenLayers.Animation.requestFrame, 100, function() { rider.step(); });
+    this.selectRide();
     this.animation = OpenLayers.Animation.start(function() { rider.step(); });
+
+    var thisrider = this;
+    window.addEventListener("hashchange", function(evt) { thisrider.selectRide(); }, true);
 }
+
+Rider.prototype.onFeatureSelect = function(evt) {
+    var ride = evt.feature.data
+    ride.select();
+    window.location.hash = '#' + ride.num;
+    //feature = evt.feature;
+}
+
+Rider.prototype.onFeatureUnselect = function(evt) {
+    var ride = evt.feature.data;
+    ride.unselect();
+    window.location.hash = '#';
+}
+
 
 Rider.prototype.step = function() {
     
     var nextTime = new Date();
     var step = nextTime.getTime() - this.time.getTime();
     this.time = nextTime;
-
+    
     for (var i = 0; i < this.maxrides; i++) {
         if (this.rides[i] == null || this.rides[i].step(step)) {
-            this.requestRide(i);
+            if (this.requestRide(i)) {
+                break;
+            }
         }
     }
 }
 
-Rider.prototype.requestRide = function(rideIndex) {
+Rider.prototype.requestRide = function(rideIndex, ride) {
     if (this.grid.rides > 0 && !this.isRequesting) {
         var rider = this;
         rider.isRequesting = true;
-        var ride = Math.floor(this.grid.rides * Math.random());
+        if (ride == null || ride < 0 || ride >= this.grid.rides) { 
+            ride = Math.floor(this.grid.rides * Math.random()); 
+        }
         var ridePath = this.datadir + '/ride' + ride + '.json';
         var xobj = new XMLHttpRequest();
         xobj.overrideMimeType("application/json");
@@ -289,55 +245,181 @@ Rider.prototype.requestRide = function(rideIndex) {
             if (xobj.readyState == 4) {
                 rider.isRequesting = false;
                 var jsonText = xobj.responseText;
-                rider.startRide(rideIndex, ridePath, JSON.parse(jsonText));
+                rider.startRide(rideIndex, ride, JSON.parse(jsonText));
             }
         };
         xobj.send();
+        return true;
     }
+    return false;
 }
 
-Rider.prototype.startRide = function(rideIndex, ridePath, rideData) {
-    if (rideData['ride'] == null) {
-        badRide = [ridePath, rideData];
+Rider.prototype.selectRide = function() {
+    
+    // Parse hash for ride and check to see if its already selected
+    var selected = window.location.hash.slice(1);
+    if (selected == null || selected == "") {
+        return;
+    } else {
+        selected = Number(selected);
+    }
+    if (isNaN(selected) || selected < 0 && selected >= this.grid.rides) {
         return;
     }
-    this.rides[rideIndex] = new Ride(this, rideIndex, rideData['ride']);
+    for (var i in this.rides) {
+        if (this.rides[i].num == selected && this.rides[i].selected) {
+            return;
+        }
+    }
 
+    this.selectControl.unselectAll();
+
+    // search for ride
+    var empty = -1;
+    for (var i = 0; i < this.maxrides; i++) {
+        if (!this.rides[i]) {
+            empty = i;
+            continue;
+        }
+
+        if (this.rides[i].num == selected) {
+            this.selectControl.select(this.rides[i].feature);
+            return;
+        }
+    }
+
+    // Pick a ride to destroy.
+    if (empty < 0) {
+        empty = Math.floor(this.grid.rides * Math.random());
+        this.rides[empty].destroy();
+    }
+    this.rides[empty] = null;
+    this.requestRide(empty, selected);
 }
 
-function Ride(rider, index, points) {
+Rider.prototype.unselectRide = function() {
+    this.selectControl.unselectAll();
+}
+
+Rider.prototype.startRide = function(rideIndex, rideNum, rideData) {
+    if (rideData['ride'] == null || rideData['ride'].length == 0) {
+        badRide = [rideNum, rideData];
+        return;
+    }
+    this.rides[rideIndex] = new Ride(this, rideIndex, rideNum, rideData['ride']);
+
+    for (var i in this.rides) {
+        if (this.rides[i].selected) {
+            return;
+        }
+    }
+    if (window.location.hash == '#' + rideNum) {
+        this.selectControl.select(this.rides[rideIndex].feature);
+    }   
+}
+
+function Ride(rider, index, rideNum, points) {
     this.rider = rider;
-    this.index = index
+    this.index = index;
+    this.num = rideNum;
     this.points = points;
-    this.countdown = 3*1000;
     this.current = 0;
     this.time = 0;
+    this.rideFeatures = [];
 
-    this.point = null;
+    this.point = this.getPoint();
+    this.selected = false;
 
     var size = new OpenLayers.Size;
-    this.feature = new OpenLayers.Feature.Vector(new OpenLayers.Geometry.Point(0,0), this);
+    
+    if (this.point == null || this.point.lat == 0) {
+        badRide = this;
+    }
+
+    this.feature = new OpenLayers.Feature.Vector(new OpenLayers.Geometry.Point(this.point.lon,this.point.lat), this);
     rider.layer.addFeatures([this.feature]);
+
     //this.marker = new OpenLayers.Marker(new OpenLayers.LonLat(0,0),rider.icon.clone());
     //this.marker.display(false);
     //rider.markers.addMarker(this.marker);
 }
 
+Ride.prototype.destroy = function() {
+    if (this.selected) {
+        this.rider.selectControl.unselect(this.feature);
+    }
+    this.feature.destroy();
+    this.rider = null;
+}
 
 
+Ride.prototype.select = function() {
+    this.selected = true;
+    var lines = [];
+    var line = new OpenLayers.Geometry.LineString();
+    var time = 0;
+    for (i in this.points) {
+        if (this.points[i][2] - time > this.rider.grid.maxSkip) {
+            if (line.getVertices().length > 2) {
+                lines[lines.length] = line;
+            }
+            line = new OpenLayers.Geometry.LineString();
+        }
+
+        time = this.points[i][2];
+        line.addPoint(new OpenLayers.Geometry.Point(this.points[i][0], this.points[i][1]));
+    }
+    lastLine = line;
+    if (line.getVertices().length > 2) {
+        lines[lines.length] = line;
+    }
+
+    if (lines.length == 0) {
+        return null;
+    }
+    var multiline = new OpenLayers.Geometry.MultiLineString(lines);
+    multiline.transform(this.rider.grid.projection, this.rider.map.baseLayer.projection);
+    this.rideFeatures = [
+        new OpenLayers.Feature.Vector(multiline, this, {
+            stroke: true,
+            strokeColor: "#FF0000",
+            strokeWidth: 6,
+            strokeOpacity: 0.8}),
+        new OpenLayers.Feature.Vector(multiline, this, {
+            stroke: true,
+            strokeColor: "#000000",
+            strokeWidth: 1.5,
+            strokeOpacity: 1})
+            ];
+    this.rider.grid.layer.addFeatures(this.rideFeatures);
+
+}
+
+Ride.prototype.unselect = function() {
+    this.selected = false;
+    if (this.rideFeatures) {
+        this.rider.grid.layer.removeFeatures(this.rideFeatures);
+        this.rideFeatures = null;
+    }
+}
 
 Ride.prototype.step = function (millis) {
     this.time += millis * this.rider.speed;
     var nextPoint = this.getPoint();
 
     if (nextPoint == null) {
-        if (this.time > this.countdown) {
+        if (this.time > 1000 * this.rider.grid.maxSkip) {
+            endTime = this.time;
             //this.rider.markers.removeMarker(this.marker);
-            this.rider.layer.removeFeatures([this.feature]);
-            return true;
+            if (!this.selected) { 
+                this.rider.layer.removeFeatures([this.feature]);
+                this.feature.destroy();
+                return true;
+            } else {
+               this.current = 0;
+               this.time = 0;
+            }
         }
-        //this.marker.inflate(this.time/this.countdown);
-        //this.feature.style.opacity = (this.time/this.countdown);
     } else {
         this.feature.move(nextPoint);
     }
@@ -351,20 +433,23 @@ Ride.prototype.getPoint = function() {
     while (point == null && this.current + 1 < this.points.length) {
         var lastPoint = this.points[this.current];
         var nextPoint = this.points[this.current + 1];
-        var totalTime = Math.min(this.rider.grid.maxSkip, nextPoint[2] - lastPoint[2])*1000;
-
-        if (this.time > totalTime) {
+        var duration = nextPoint[2] - lastPoint[2];
+        var maxMillis = 1000 * Math.min(this.rider.grid.maxSkip, duration);
+        if (this.time > maxMillis) {
+            this.time -= maxMillis;
             this.current++;
-            this.time -= totalTime;
             continue;
         }
 
-        var x = (lastPoint[0]*this.time + nextPoint[0]*(totalTime - this.time))/totalTime;
-        var y = (lastPoint[1]*this.time + nextPoint[1]*(totalTime - this.time))/totalTime;
-        var point = new OpenLayers.LonLat(x,y);
-        point.transform(this.rider.grid.projection, this.rider.map);
+        var x, y;
+        if (this.rider.grid.maxSkip > duration) {
+            x = lastPoint[0];
+            y = lastPoint[1];
+        } else {
+            x = (lastPoint[0]*this.time + nextPoint[0]*(maxMillis - this.time))/maxMillis;
+            y = (lastPoint[1]*this.time + nextPoint[1]*(maxMillis - this.time))/maxMillis;
+        }
+        var point = new OpenLayers.LonLat(x,y).transform(this.rider.grid.projection, this.rider.map.baseLayer.projection);
     }
     return point;
 }
-
-
