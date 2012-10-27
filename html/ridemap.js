@@ -287,7 +287,7 @@ Rider.prototype.selectRide = function() {
         return;
     }
     for (var i in this.rides) {
-        if (this.rides[i].num == selected) {
+        if (this.rides[i] != null && this.rides[i].num == selected) {
             if (!this.rides[i].selected) {
                 //this.selectControl.unselectAll();
                 this.selectControl.select(this.rides[i].feature);
