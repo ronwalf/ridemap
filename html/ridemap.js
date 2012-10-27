@@ -15,8 +15,9 @@ function init(datadir){
     //var wmsLayer = new OpenLayers.Layer.WMS( "OpenLayers WMS",
     //    "http://vmap0.tiles.osgeo.org/wms/vmap0?", {layers: 'basic'});
     var omLayer = new OpenLayers.Layer.OSM();
+    var blankLayer = new OpenLayers.Layer.Vector("Blank Map", { isBaseLayer : true, projection: omLayer.projection });
     //map.addLayers([omLayer, wmsLayer]);
-    map.addLayers([omLayer]);
+    map.addLayers([omLayer, blankLayer]);
     
     
     var xobj = new XMLHttpRequest();
@@ -27,7 +28,7 @@ function init(datadir){
         var jsonText = xobj.responseText;
         grid = new Grid(map, datadir, JSON.parse(jsonText));
         rider = new Rider(map, grid, datadir);
-        map.addLayers([grid.layer, rider.layer]);
+        map.addLayers([grid.layer, rider.routeLayer, rider.layer]);
       }
     };
     xobj.send();
@@ -43,12 +44,13 @@ function Grid(map, datadir, data) {
     this.projection = new OpenLayers.Projection(data["projection"]);
     this.layer = new OpenLayers.Layer.Vector("Grid Layer", 
         { projection: this.projection });
-
     this.desc = data['desc'];
     this.maxTime = data['maxTime'];
     this.totalTime = data['totalTime'];
     this.rides = data['rides'];
     this.maxSkip = data['maxSkip'];
+    this.tags = data['tags']['tags']
+    this.defaultTag = data['tags']['default'];
 
     var p = this.hexItoP(data['cells'][0]["pos"]);
 
@@ -92,6 +94,16 @@ Grid.prototype.hexItoP = function(p) {
   return [p[0] * s, h * (p[1] - 0.5 * Math.abs(p[0] % 2))];
 }
 
+Grid.prototype.tagData = function(tagname) {
+    var tag = this.defaultTag;
+    for (var i in this.tags) {
+        if (tagname == this.tags[i]['name']) {
+            tag = this.tags[i];
+            break;
+        }
+    }
+    return tag;
+}
 
 Grid.prototype.cellFeature = function(cell) {
     var pos = this.hexItoP(cell['pos']);
@@ -157,7 +169,7 @@ function Rider(map, grid, datadir) {
     this.map = map;
     this.grid = grid;
     this.datadir = datadir;
-    this.maxrides = 30;
+    this.maxrides = 20;
     this.speed = 100;
     this.rides = [];    
     this.time = new Date();
@@ -165,7 +177,8 @@ function Rider(map, grid, datadir) {
     var defaultStyle = OpenLayers.Util.applyDefaults({
         graphicWidth: 20,
         graphicHeight: 20,
-        externalGraphic: 'img/MUTCD_R4-11.svg',
+        externalGraphic: '${img}',
+        graphicZIndex: 1,
         //externalGraphic: "http://upload.wikimedia.org/wikipedia/commons/thumb/4/42/MUTCD_R4-11.svg/200px-MUTCD_R4-11.svg.png",
         fill: false,
         fillOpacity: 1,
@@ -194,13 +207,19 @@ function Rider(map, grid, datadir) {
     );
     map.addControl(this.selectControl);
     this.selectControl.activate();
+    
+    this.routeLayer = new OpenLayers.Layer.Vector("Route Layer", 
+      { projection: grid.projection,
+        styleMap : styleMap
+      });
+    
 
     this.selectRide();
-    this.animation = OpenLayers.Animation.start(function() { rider.step(); });
-
     var thisrider = this;
+    this.animation = OpenLayers.Animation.start(function() { thisrider.step(); });
     window.addEventListener("hashchange", function(evt) { thisrider.selectRide(); }, true);
 }
+
 
 Rider.prototype.onFeatureSelect = function(evt) {
     var ride = evt.feature.data
@@ -268,49 +287,44 @@ Rider.prototype.selectRide = function() {
         return;
     }
     for (var i in this.rides) {
-        if (this.rides[i].num == selected && this.rides[i].selected) {
+        if (this.rides[i].num == selected) {
+            if (!this.rides[i].selected) {
+                //this.selectControl.unselectAll();
+                this.selectControl.select(this.rides[i].feature);
+            }
             return;
         }
     }
 
+    // Unselect all and reset hash
     this.selectControl.unselectAll();
+    window.location.hash = "#" + selected;
 
-    // search for ride
-    var empty = -1;
+    // search for empty spot ride (if not, pick a random one)
+    var empty = Math.floor(this.maxrides * Math.random());
     for (var i = 0; i < this.maxrides; i++) {
         if (!this.rides[i]) {
             empty = i;
             continue;
         }
-
-        if (this.rides[i].num == selected) {
-            this.selectControl.select(this.rides[i].feature);
-            return;
-        }
     }
 
-    // Pick a ride to destroy.
-    if (empty < 0) {
-        empty = Math.floor(this.grid.rides * Math.random());
+    if (this.rides[empty]) {
         this.rides[empty].destroy();
+        this.rides[empty] = null;
     }
-    this.rides[empty] = null;
     this.requestRide(empty, selected);
 }
 
-Rider.prototype.unselectRide = function() {
-    this.selectControl.unselectAll();
-}
-
 Rider.prototype.startRide = function(rideIndex, rideNum, rideData) {
-    if (rideData['ride'] == null || rideData['ride'].length == 0) {
+    if (rideData['rides'] == null || rideData['rides'].length == 0 || rideData['rides'][0]['ride'].length == 0) {
         badRide = [rideNum, rideData];
         return;
     }
-    this.rides[rideIndex] = new Ride(this, rideIndex, rideNum, rideData['ride']);
+    this.rides[rideIndex] = new Ride(this, rideIndex, rideNum, rideData['rides']);
 
     for (var i in this.rides) {
-        if (this.rides[i].selected) {
+        if (this.rides[i].selected && this.rides[i].num == rideNum) {
             return;
         }
     }
@@ -319,13 +333,15 @@ Rider.prototype.startRide = function(rideIndex, rideNum, rideData) {
     }   
 }
 
-function Ride(rider, index, rideNum, points) {
+function Ride(rider, index, rideNum, rideData) {
     this.rider = rider;
     this.index = index;
     this.num = rideNum;
-    this.points = points;
-    this.current = 0;
-    this.time = 0;
+    this.rides = rideData;
+    
+    this.feature = null;
+    this.setLeg(0);
+
     this.rideFeatures = [];
 
     this.point = this.getPoint();
@@ -335,73 +351,101 @@ function Ride(rider, index, rideNum, points) {
     
     if (this.point == null || this.point.lat == 0) {
         badRide = this;
+        return;
     }
 
-    this.feature = new OpenLayers.Feature.Vector(new OpenLayers.Geometry.Point(this.point.lon,this.point.lat), this);
-    rider.layer.addFeatures([this.feature]);
-
-    //this.marker = new OpenLayers.Marker(new OpenLayers.LonLat(0,0),rider.icon.clone());
-    //this.marker.display(false);
-    //rider.markers.addMarker(this.marker);
 }
 
 Ride.prototype.destroy = function() {
     if (this.selected) {
         this.rider.selectControl.unselect(this.feature);
     }
+    this.rider.layer.removeFeatures([this.feature]);
+    this.rider.routeLayer.removeFeatures(this.rideFeatures);
     this.feature.destroy();
     this.rider = null;
 }
 
 
+Ride.prototype.setLeg = function (leg) {
+    var reselect = this.selected;
+    this.leg = leg;
+    this.current = 0;
+    this.time = 0;
+    if (reselect) {
+        this.rider.selectControl.unselectAll();
+    }
+    this.img = this.rider.grid.tagData(this.rides[leg]['tag'])['img'];
+    if (this.feature != null) {
+        this.rider.layer.removeFeatures([this.feature]);
+        this.feature.destroy();
+    }
+    this.point = this.getPoint();
+    this.feature = new OpenLayers.Feature.Vector(new OpenLayers.Geometry.Point(this.point.lon, this.point.lat), this);
+    this.rider.layer.addFeatures([this.feature]);
+    if (reselect) {
+        this.rider.selectControl.select(this.feature);
+    }
+}
+
+
+
 Ride.prototype.select = function() {
+    selectedRide = this;
     this.selected = true;
-    var lines = [];
-    var line = new OpenLayers.Geometry.LineString();
-    var time = 0;
-    for (i in this.points) {
-        if (this.points[i][2] - time > this.rider.grid.maxSkip) {
-            if (line.getVertices().length > 2) {
-                lines[lines.length] = line;
+    if (this.rideFeatures != null) {
+        this.rider.routeLayer.removeFeatures(this.rideFeatures);
+    }
+    this.rideFeatures = [];
+    for (var i in this.rides) {
+        var line = new OpenLayers.Geometry.LineString();
+        var lines = [];
+        var ride = this.rides[i]["ride"];
+        var tag = this.rides[i]["tag"];
+        var time = 0;
+        for (var j in ride) {
+            var tpoint = ride[j];
+            if (tpoint[2] - time > this.rider.grid.maxSkip) {
+                if (line.getVertices().length > 2) {
+                    lines[lines.length] = line;
+                }
+                line = new OpenLayers.Geometry.LineString();
             }
-            line = new OpenLayers.Geometry.LineString();
+            time = tpoint[2];
+
+            line.addPoint(new OpenLayers.Geometry.Point(tpoint[0], tpoint[1]));
+        }
+        if (line.getVertices().length > 2) {
+            lines[lines.length] = line;
         }
 
-        time = this.points[i][2];
-        line.addPoint(new OpenLayers.Geometry.Point(this.points[i][0], this.points[i][1]));
+        if (lines.length == 0) {
+            return null;
+        }
+        
+        var multiline = new OpenLayers.Geometry.MultiLineString(lines);
+        multiline.transform(this.rider.grid.projection, this.rider.map.baseLayer.projection);
+        this.rideFeatures[this.rideFeatures.length] = new OpenLayers.Feature.Vector(multiline, this, {
+                stroke: true,
+                strokeColor: this.rider.grid.tagData(tag)['color'],
+                strokeWidth: 4,
+                strokeOpacity: 0.8,
+                graphicZIndex: 15});
+        this.rideFeatures[this.rideFeatures.length] = new OpenLayers.Feature.Vector(multiline.clone(), this, {
+                stroke: true,
+                strokeColor: "#000000",
+                strokeWidth: 1.5,
+                strokeOpacity: 1,
+                graphicZIndex: 10});
     }
-    lastLine = line;
-    if (line.getVertices().length > 2) {
-        lines[lines.length] = line;
-    }
-
-    if (lines.length == 0) {
-        return null;
-    }
-    var multiline = new OpenLayers.Geometry.MultiLineString(lines);
-    multiline.transform(this.rider.grid.projection, this.rider.map.baseLayer.projection);
-    this.rideFeatures = [
-        new OpenLayers.Feature.Vector(multiline, this, {
-            stroke: true,
-            strokeColor: "#FF0000",
-            strokeWidth: 4,
-            strokeOpacity: 0.8,
-            graphicZIndex: 15}),
-        new OpenLayers.Feature.Vector(multiline.clone(), this, {
-            stroke: true,
-            strokeColor: "#000000",
-            strokeWidth: 1.5,
-            strokeOpacity: 1,
-            graphicZIndex: 10})
-            ];
-    this.rider.grid.layer.addFeatures(this.rideFeatures);
+    this.rider.routeLayer.addFeatures(this.rideFeatures);
 
 }
 
 Ride.prototype.unselect = function() {
     this.selected = false;
-    if (this.rideFeatures) {
-        this.rider.grid.layer.removeFeatures(this.rideFeatures);
+    if (this.rideFeatures != null) {
+        this.rider.routeLayer.removeFeatures(this.rideFeatures);
         this.rideFeatures = null;
     }
 }
@@ -414,13 +458,14 @@ Ride.prototype.step = function (millis) {
         if (this.time > 1000 * this.rider.grid.maxSkip) {
             endTime = this.time;
             //this.rider.markers.removeMarker(this.marker);
-            if (!this.selected) { 
+            if (this.leg + 1 < this.rides.length) {
+                this.setLeg(this.leg + 1);
+            } else if (!this.selected) { 
                 this.rider.layer.removeFeatures([this.feature]);
                 this.feature.destroy();
                 return true;
             } else {
-               this.current = 0;
-               this.time = 0;
+               this.setLeg(0);
             }
         }
     } else {
@@ -433,9 +478,12 @@ Ride.prototype.step = function (millis) {
 Ride.prototype.getPoint = function() {
 
     var point = null;
-    while (point == null && this.current + 1 < this.points.length) {
-        var lastPoint = this.points[this.current];
-        var nextPoint = this.points[this.current + 1];
+    var ride = this.rides[this.leg]["ride"];
+    var tag = this.rides[this.leg]["tag"]
+    
+    while (point == null && this.current + 1 < ride.length) {
+        var lastPoint = ride[this.current];
+        var nextPoint = ride[this.current + 1];
         var duration = nextPoint[2] - lastPoint[2];
         var maxMillis = 1000 * Math.min(this.rider.grid.maxSkip, duration);
         if (this.time > maxMillis) {

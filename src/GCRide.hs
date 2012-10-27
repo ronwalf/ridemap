@@ -18,6 +18,8 @@ import Data.Time.Clock
 import Data.Time.Format
 import System.Locale (defaultTimeLocale)
 
+import Tagging (Taggable(..))
+
 readGCRide :: String -> IO GCRide
 readGCRide fname = do
     f <- B.readFile fname
@@ -43,6 +45,8 @@ data GCRide = GCRide {
     samples :: [GCSample]
     } deriving (Show, Eq)
 
+instance Taggable GCRide where
+    getTags = map (\(a,b) -> (T.unpack a, T.unpack b)) . M.toList . tags
 
 instance FromJSON GCRide where
     parseJSON (Object v) = do

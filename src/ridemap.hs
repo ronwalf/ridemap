@@ -3,18 +3,23 @@ import Control.Monad (foldM, guard, when)
 import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.Function (on)
-import Data.List (sortBy)
+import Data.List (groupBy, intercalate, sortBy)
 import qualified Data.Map as M
-import Data.Maybe (mapMaybe)
+import Data.Maybe (fromMaybe, mapMaybe, listToMaybe)
+import Data.Time.Calendar (Day)
+import Data.Time.Clock (utctDay, UTCTime) 
+import Data.Time.Format (parseTime)
 --import Debug.Trace (trace)
 import System.Console.GetOpt
 import System.Directory (createDirectory, doesDirectoryExist)
 import System.Environment (getArgs)
-import System.FilePath (combine)
+import System.FilePath (combine, takeFileName)
+import System.Locale (defaultTimeLocale)
 --import System.IO (hPutStrLn, stderr)
 
 
 import GCRide
+import qualified Tagging as T
 
 
 gCirc :: Double
@@ -24,15 +29,17 @@ data Options = Options {
     maxTime :: Double,
     minStep :: Double,
     resolution :: Double,
-    projection :: (String, TrackPoint -> TrackPoint)
+    projection :: (String, TrackPoint -> TrackPoint),
+    tagFile :: T.TagFile
     }
 
 defaultOpts :: Options
 defaultOpts = Options {
-    maxTime = 60,
-    minStep = 0.5,
-    resolution = 20,
-    projection = ("EPSG:4326",id)
+    maxTime = 180,
+    minStep = 0.1,
+    resolution = 40,
+    projection = ("EPSG:4326",id),
+    tagFile = T.emptyTagFile { T.defaultTag = T.emptyTagData { T.color = "#FF0000", T.image = "img/MUTCD_W8-10.svg" } }
 }
 
 readOrFail :: Read a => String -> String -> IO a
@@ -63,6 +70,12 @@ options =
     , Option ['g'] ["google"] 
         (NoArg (\opts -> return $ opts { projection = ("EPSG:900913", toGM) }))
         "Use google maps projection"
+    , Option ['t'] ["tag"]
+        (ReqArg (\f opts -> do
+            tf <- T.readTagFile f
+            return $ opts { tagFile = tf })
+        "FILENAME")
+        "tag file"
     ]
 
 
@@ -80,7 +93,7 @@ main = do
             ++ usageInfo "Usage: rideaccum [OPTION...] ouput-directory files..." options
     --elapsed <- foldM totalTime 0 files
     ensureDirectory dir
-    grid <- foldM (positions dir) (emptyGrid opts) files
+    grid <- foldM (positions dir) (emptyGrid opts) $ groupBy ((==) `on` fileDay) files 
     BL.writeFile (combine dir "grid.json") (encode grid)
     return ()
     where
@@ -91,8 +104,33 @@ main = do
                 createDirectory dir
             return ()
 
-positions :: String -> HexGrid -> String -> IO HexGrid 
-positions dir grid f = do
+fileDay :: String -> Maybe Day
+fileDay = fmap utctDay . (parseTime defaultTimeLocale "%Y_%m_%d_%H_%M_%S.json" :: String -> Maybe UTCTime) . takeFileName
+
+positions :: String -> HexGrid -> [String] -> IO HexGrid 
+positions dir grid fl = do
+    putStrLn $ "Processing rides: " ++ intercalate ", " fl
+    rides <- grid `seq` mapM readGCRide fl
+    let rideParts = map (\r -> 
+            ( map (snd $ projection $ gridOpts grid) $ trackPoints r
+            , listToMaybe $ T.tag (tagFile $ gridOpts grid) r
+            )) rides
+    putStrLn $ "Corresponding tags: " ++ intercalate ", " (map (fromMaybe "None" . snd) rideParts)
+    BL.writeFile (combine dir $ "ride" ++ show (gridRides grid) ++ ".json") $ encode $ object $
+        ["rides" .= map 
+            (\(tpl, tag)-> object $ ("ride" .= tpl) : (maybe [] (\t -> ["tag" .= t]) tag))
+            rideParts]
+    let segs = concatMap (segments (maxTime $ gridOpts grid) . fst) rideParts 
+    foldM processSegment (grid { gridRides = gridRides grid + 1 }) segs
+    where
+    processSegment :: HexGrid -> [TrackPoint] -> IO HexGrid
+    processSegment grid' segment = do
+        let path = gridPath (minStep $ gridOpts grid') (gridDesc grid') segment
+        let m = foldr (\hc m' -> M.insertWith addCells (hcPos hc) hc m') (gridCells grid') path
+        return $ grid' { gridCells = m }
+
+positions' :: String -> HexGrid -> String -> IO HexGrid 
+positions' dir grid f = do
     ride <- readGCRide f
     let tpl = map (snd $ projection $ gridOpts grid) $ trackPoints ride
     BL.writeFile (combine dir $ "ride" ++ show (gridRides grid) ++ ".json") $
@@ -139,7 +177,8 @@ instance ToJSON HexGrid where
         "maxTime" .= maxCellTime,
         "totalTime" .= totalTime,
         "maxSkip" .= (maxTime $ gridOpts grid),
-        "rides" .= gridRides grid ]
+        "rides" .= gridRides grid,
+        "tags" .= (tagFile $ gridOpts grid)]
 
 data HexCell = HexCell {
     hcPos :: (Int, Int),
