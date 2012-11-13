@@ -11,6 +11,10 @@ import Control.Applicative
 import Control.Monad
 import Data.Aeson
 import qualified Data.ByteString.Lazy as B
+import qualified Data.Colour as C
+import qualified Data.Colour.Names as CN
+import qualified Data.Colour.SRGB as SRGB
+import qualified Data.Text as T
 import Text.Regex.Posix
 
 readTagFile :: String -> IO TagFile
@@ -57,10 +61,10 @@ data TagData = TagData {
     attr :: String,
     matchRE :: String,
     image :: String,
-    color :: String
+    color :: C.Colour Double
 }
 emptyTagData :: TagData
-emptyTagData = TagData "" "" "" "" ""
+emptyTagData = TagData "" "" "" "" CN.red
 
 instance FromJSON TagData where
     parseJSON (Object v) = TagData <$>
@@ -68,7 +72,7 @@ instance FromJSON TagData where
         v .:? "attr" .!= "" <*>
         v .:? "match" .!= "" <*>
         v .:? "img" .!= "" <*>
-        v .:? "color" .!= ""
+        v .:? "color" .!= CN.red
     parseJSON _ = mzero
 
 instance ToJSON TagData where
@@ -79,7 +83,14 @@ instance ToJSON TagData where
         "img" .= image td,
         "color" .= color td
         ]
-    
+
+instance FromJSON (C.Colour Double) where
+    parseJSON (String t) = case SRGB.sRGB24reads (T.unpack t) of
+        [(c,"")] -> pure c
+        _ -> fail $ "Could not read string " ++ T.unpack t
+    parseJSON _ = mzero
+instance ToJSON (C.Colour Double) where
+    toJSON = toJSON . SRGB.sRGB24show
 
 class Taggable a where
     getTags :: a -> [(String, String)]

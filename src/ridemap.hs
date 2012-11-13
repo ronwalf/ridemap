@@ -1,9 +1,11 @@
 {-# LANGUAGE FlexibleInstances, OverloadedStrings #-}
-import Control.Monad (foldM, guard, when)
+import Control.Monad (foldM, guard, liftM, when)
 import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as BL
+import qualified Data.Colour as C
+import qualified Data.Colour.Names as CN
 import Data.Function (on)
-import Data.List (groupBy, intercalate, sortBy)
+import Data.List (find, groupBy, intercalate, sortBy)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, mapMaybe, listToMaybe)
 import Data.Time.Calendar (Day)
@@ -39,7 +41,7 @@ defaultOpts = Options {
     minStep = 0.1,
     resolution = 40,
     projection = ("EPSG:4326",id),
-    tagFile = T.emptyTagFile { T.defaultTag = T.emptyTagData { T.color = "#FF0000", T.image = "img/MUTCD_W8-10.svg" } }
+    tagFile = T.emptyTagFile { T.defaultTag = T.emptyTagData { T.color = CN.red, T.image = "img/MUTCD_W8-10.svg" } }
 }
 
 readOrFail :: Read a => String -> String -> IO a
@@ -113,37 +115,37 @@ positions dir grid fl = do
     rides <- grid `seq` mapM readGCRide fl
     let rideParts = map (\r -> 
             ( map (snd $ projection $ gridOpts grid) $ trackPoints r
-            , listToMaybe $ T.tag (tagFile $ gridOpts grid) r
+            , T.tag (tagFile $ gridOpts grid) r
             )) rides
-    putStrLn $ "Corresponding tags: " ++ intercalate ", " (map (fromMaybe "None" . snd) rideParts)
+    putStrLn $ "Corresponding tags: " ++ intercalate ", " (concatMap snd rideParts)
     BL.writeFile (combine dir $ "ride" ++ show (gridRides grid) ++ ".json") $ encode $ object $
         ["rides" .= map 
-            (\(tpl, tag)-> object $ ("ride" .= tpl) : (maybe [] (\t -> ["tag" .= t]) tag))
+            (\(tpl, tags)-> object $ ("ride" .= tpl) : (maybe [] (\t -> ["tag" .= t]) $ listToMaybe tags))
             rideParts]
-    let segs = concatMap (segments (maxTime $ gridOpts grid) . fst) rideParts 
+    let segs = concatMap (\(tpl, tags) -> map (\seg -> (seg, tags)) $ segments (maxTime $ gridOpts grid) tpl) rideParts 
     foldM processSegment (grid { gridRides = gridRides grid + 1 }) segs
     where
-    processSegment :: HexGrid -> [TrackPoint] -> IO HexGrid
-    processSegment grid' segment = do
-        let path = gridPath (minStep $ gridOpts grid') (gridDesc grid') segment
+    processSegment :: HexGrid -> ([TrackPoint], [String]) -> IO HexGrid
+    processSegment grid' (segment, tags) = do
+        let color = colorize tags
+        let path = gridPath color (minStep $ gridOpts grid') (gridDesc grid') segment
         let m = foldr (\hc m' -> M.insertWith addCells (hcPos hc) hc m') (gridCells grid') path
         return $ grid' { gridCells = m }
+    colorize :: [String] -> C.Colour Double
+    colorize [] = T.color $ T.defaultTag $ tagFile $ gridOpts grid
+    colorize tags =
+        let
+            tf = tagFile $ gridOpts grid
+            defaultC = T.color $ T.defaultTag tf
+            tagColor name = liftM T.color $ find ((== name) . T.name) $ T.tags tf
+            colors = mapMaybe tagColor tags
+            colorWeight = 1.0 / fromIntegral (length colors)
 
-positions' :: String -> HexGrid -> String -> IO HexGrid 
-positions' dir grid f = do
-    ride <- readGCRide f
-    let tpl = map (snd $ projection $ gridOpts grid) $ trackPoints ride
-    BL.writeFile (combine dir $ "ride" ++ show (gridRides grid) ++ ".json") $
-        encode (object ["ride" .= tpl])
-    let segs = segments (maxTime $ gridOpts grid) $ tpl
-    foldM processSegment (grid { gridRides = gridRides grid + 1 }) segs
-    where
-    processSegment :: HexGrid -> [TrackPoint] -> IO HexGrid
-    processSegment grid' segment = do
-        let path = gridPath (minStep $ gridOpts grid') (gridDesc grid') segment
-        let m = foldr (\hc m' -> M.insertWith addCells (hcPos hc) hc m') (gridCells grid') path
-        return $ grid' { gridCells = m }
-
+        in
+        if (null colors) 
+            then defaultC
+            else C.affineCombo (map (\c -> (colorWeight, c)) colors) defaultC
+    
 
 
 data HexGrid = HexGrid {
@@ -183,6 +185,7 @@ instance ToJSON HexGrid where
 data HexCell = HexCell {
     hcPos :: (Int, Int),
     hcTime :: !Double,
+    hcColor :: C.Colour Double,
     hcCount :: !Int
 }
 
@@ -190,19 +193,23 @@ instance ToJSON HexCell where
     toJSON cell = object [
         "pos" .= hcPos cell,
         "time" .= hcTime cell,
+        "color" .= hcColor cell,
         "count" .= hcCount cell ]
 
-tpToCell :: HexDesc -> TrackPoint -> Double -> HexCell
-tpToCell desc tp time = HexCell {
+tpToCell :: HexDesc -> C.Colour Double -> TrackPoint -> Double -> HexCell
+tpToCell desc color tp time = HexCell {
     hcPos = hexPtoI desc tp,
+    hcColor = color,
     hcTime = time,
     hcCount = 1
 }
 
 addCells :: HexCell -> HexCell -> HexCell
 addCells x y = -- x `seq` y `seq` 
+    let time = hcTime x + hcTime y in
     x {
-    hcTime = hcTime x + hcTime y,
+    hcTime = time,
+    hcColor = C.blend (hcTime x / time) (hcColor x) (hcColor y),
     hcCount = hcCount x + hcCount y
 }
 
@@ -221,9 +228,9 @@ segments mstep =
             let (x, y) = segSpan (tp1:tpl) in
             (tp0 : x, y)
 
-gridPath :: Double -> HexDesc -> [TrackPoint] -> [HexCell]
-gridPath _ _ [] = []
-gridPath step desc (h : l) =
+gridPath :: C.Colour Double -> Double -> HexDesc -> [TrackPoint] -> [HexCell]
+gridPath _ _ _ [] = []
+gridPath color step desc (h : l) =
     gp' 0 h l
     where
         pos :: TrackPoint -> (Int,Int)
@@ -240,10 +247,10 @@ gridPath step desc (h : l) =
                     then (y0 == y1 + mod (x1+1) 2 || y0 == y1 - mod x1 2)
                     else False
         gp' :: Double -> TrackPoint -> [TrackPoint] -> [HexCell]
-        gp' t tp0 [] = [tpToCell desc tp0 t]
+        gp' t tp0 [] = [tpToCell desc color tp0 t]
         gp' t tp0 (tp1 : tpl)
             | pos tp0 == pos tp1 = t `seq` gp' (t + elapsed) tp1 tpl
-            | (adjacent tp0 tp1 && elapsed < step) = tpToCell desc tp0 (t + elapsed/2) : gp' (elapsed/2) tp1 tpl
+            | (adjacent tp0 tp1 && elapsed < step) = tpToCell desc color tp0 (t + elapsed/2) : gp' (elapsed/2) tp1 tpl
             -- | (adjacent tp0 tp1) = (pos tp0, t + elapsed/2) : gp' (elapsed/2) tp1 tpl
             | otherwise = -- trace (show (tp0, tp1, pos tp0, pos tp1)) $ 
                 gp' t tp0 (midpoint tp0 tp1 : tp1 : tpl)

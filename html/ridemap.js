@@ -4,7 +4,7 @@
  * (see LICENSE file for details)
  */
 var timeThreshold = 0.6;
-var cellColor = "#FF0000";
+// var cellColor = "#FF0000";
 
 var grid = null
 var rider = null;
@@ -85,8 +85,42 @@ function Grid(map, datadir, data) {
 
     //  Update total time
     updateTime(totalTime);
+    this.setLegend();
 }
 
+Grid.prototype.setLegend = function () {
+    if (this.legend != null) {
+        document.getElementById("legend").removeChild(this.legend);
+    } 
+    this.legend = document.createElement("table");
+    var title = document.createTextNode("Legend");
+    var titleth= document.createElement("th");
+    titleth.appendChild(title);
+    var titletr = document.createElement("tr");
+    titletr.appendChild(titleth);
+    titletr.appendChild(document.createElement("th"));
+    this.legend.appendChild(titletr);
+
+    var alltags = this.tags.concat([this.defaultTag]);
+    for (var i in alltags) {
+        var tr = document.createElement("tr");
+        var img = document.createElement("img");
+        var td = document.createElement("td");
+        td.setAttribute("style", "padding:10px; background-color:" + alltags[i]['color']);
+        img.setAttribute("width", 40);
+        img.setAttribute("height", 40);
+        img.setAttribute("src", alltags[i]["img"]);
+        td.appendChild(img);
+        tr.appendChild(td);
+        
+        td = document.createElement("td");
+        td.appendChild(document.createTextNode(alltags[i]["name"]));
+        tr.appendChild(td);
+
+        this.legend.appendChild(tr);
+    }
+    document.getElementById("legend").appendChild(this.legend);
+}
 
 Grid.prototype.hexItoP = function(p) {
   var s = this.desc[1];
@@ -123,14 +157,16 @@ Grid.prototype.cellFeature = function(cell) {
     var hexPoly = new OpenLayers.Geometry.Polygon([new OpenLayers.Geometry.LinearRing(points)]);
     hexPoly.transform(this.projection, map.baseLayer.projection);
 
-    var cellOp = 0.1+ 0.9*(Math.log(1+cell["time"])/Math.log(1+this.maxTime));
+    var cellOp = 0.25 + 0.75*(Math.log(1+cell["time"])/Math.log(1+this.maxTime));
     var hexFeature = new OpenLayers.Feature.Vector(hexPoly, cell, 
         {stroke:true,
-        strokeColor: cellColor,
+        //strokeColor: cellColor,
+        strokeColor : cell["color"],
         strokeOpacity: Math.max(0.25, cellOp/2),
         strokeWidth: Math.max(1,cellOp*3),
         //strokeWidth: 3,
-        fillColor:cellColor, 
+        //fillColor:cellColor, 
+        fillColor: cell["color"],
         fillOpacity:cellOp,
         graphicZIndex: 20});
     return hexFeature;
@@ -203,7 +239,7 @@ function Rider(map, grid, datadir) {
     });
     
     this.selectControl = new OpenLayers.Control.SelectFeature(this.layer,
-        {clickout: true}
+        {clickout: false}
     );
     map.addControl(this.selectControl);
     this.selectControl.activate();

@@ -24,6 +24,7 @@ executable ridemap
         bytestring == 0.10.*,
         containers >= 0.4,
         containers < 0.6 ,
+        colour == 2.3.*,
         directory == 1.*,
         filepath == 1.*,
         old-locale == 1.*,
