@@ -21,7 +21,7 @@ function init(datadir){
     
     
     var xobj = new XMLHttpRequest();
-    xobj.overrideMimeType("application/json");
+    if (xobj.overrideMimeType) { xobj.overrideMimeType("application/json"); }
     xobj.open('GET', datadir + '/grid.json', true);
     xobj.onreadystatechange = function () {
       if (xobj.readyState == 4) {
@@ -295,7 +295,7 @@ Rider.prototype.requestRide = function(rideIndex, ride) {
         }
         var ridePath = this.datadir + '/ride' + ride + '.json';
         var xobj = new XMLHttpRequest();
-        xobj.overrideMimeType("application/json");
+        if (xobj.overrideMimeType) { xobj.overrideMimeType("application/json"); }
         xobj.open('GET', ridePath, true);
         xobj.onreadystatechange = function () {
             if (xobj.readyState == 4) {
