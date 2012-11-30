@@ -3,8 +3,8 @@
 
 name:                ridemap
 version:             0.1.0.0
-synopsis:            Creates a combined map of Golden Cheetah activities suitable for embedding on a web page.
--- description:         
+synopsis:            Creates a combined map of Golden Cheetah activities 
+description:         Creates a combined map of Golden Cheetah activities suitable for embedding on a web page
 homepage:            https://github.com/ronwalf/ridemap
 license:             BSD3
 license-file:        LICENSE
@@ -15,9 +15,13 @@ category:            Web
 build-type:          Simple
 cabal-version:       >=1.8
 
+source-repository head
+  type: git
+  location: git://github.com/ronwalf/ridemap.git
+
 executable ridemap
   main-is:             ridemap.hs
-  other-modules:       GCRide
+  other-modules:       GCRide Tagging
   build-depends:
         base == 4.*,
         aeson == 0.6.*,
