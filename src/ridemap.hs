@@ -10,13 +10,12 @@ import qualified Data.Map as M
 import Data.Maybe (fromMaybe, mapMaybe, listToMaybe)
 import Data.Time.Calendar (Day)
 import Data.Time.Clock (utctDay, UTCTime) 
-import Data.Time.Format (parseTime)
+import Data.Time.Format (parseTimeM, defaultTimeLocale)
 --import Debug.Trace (trace)
 import System.Console.GetOpt
 import System.Directory (createDirectory, doesDirectoryExist)
 import System.Environment (getArgs)
 import System.FilePath (combine, takeFileName)
-import System.Locale (defaultTimeLocale)
 --import System.IO (hPutStrLn, stderr)
 
 
@@ -107,7 +106,7 @@ main = do
             return ()
 
 fileDay :: String -> Maybe Day
-fileDay = fmap utctDay . (parseTime defaultTimeLocale "%Y_%m_%d_%H_%M_%S.json" :: String -> Maybe UTCTime) . takeFileName
+fileDay = fmap utctDay . (parseTimeM True defaultTimeLocale "%Y_%m_%d_%H_%M_%S.json" :: String -> Maybe UTCTime) . takeFileName
 
 positions :: String -> HexGrid -> [String] -> IO HexGrid 
 positions dir grid fl = do
@@ -302,7 +301,7 @@ data TrackPoint = TrackPoint {
 } deriving (Show, Ord, Eq)
 
 instance ToJSON TrackPoint where
-    toJSON tp = toJSON (lon tp, lat tp, secs tp)
+    toJSON tp = toJSON ((round $ lon tp, round $ lat tp, round $ secs tp) :: (Int,Int,Int))
 
 trackPoints :: GCRide -> [TrackPoint]
 trackPoints =

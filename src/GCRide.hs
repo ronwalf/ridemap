@@ -16,14 +16,16 @@ import qualified Data.Map as M
 import qualified Data.Text as T
 import Data.Time.Clock
 import Data.Time.Format
-import System.Locale (defaultTimeLocale)
 
 import Tagging (Taggable(..))
+
+stripBOM :: B.ByteString -> B.ByteString
+stripBOM s = if (B.take 3 s) == (B.pack [0xEF,0xBB,0xBF]) then B.drop 3 s else s
 
 readGCRide :: String -> IO GCRide
 readGCRide fname = do
     f <- B.readFile fname
-    case decode' f of
+    case decode' $ stripBOM f of
         Just (GCRideFile ride) -> return ride
         Nothing -> fail $ "Could not decode " ++ fname
 
@@ -51,9 +53,7 @@ instance Taggable GCRide where
 instance FromJSON GCRide where
     parseJSON (Object v) = do
         startText <- v .: "STARTTIME"
-        start <- case parseTime defaultTimeLocale "%Y/%m/%d %X %Z" (T.unpack startText) of
-            Just d -> return d
-            Nothing -> fail "Could not parse start time"
+        start <- parseTimeM True defaultTimeLocale "%Y/%m/%d %X %Z" (T.unpack startText)
         recInt <- v .: "RECINTSECS"
         dtype <- v .: "DEVICETYPE"
         ident <- v .: "IDENTIFIER"
